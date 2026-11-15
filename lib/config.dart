@@ -25,3 +25,23 @@ const int kPageSize = 40;
 /// headroom below 100 MB. Raise this if you change plans/tunnel setup, and
 /// raise the `files` field maxSize in PocketBase to match.
 const int kMaxUploadBytes = 95 * 1024 * 1024; // ~99.6 MB
+
+// -----------------------------------------------------------------------------
+// Local cache (Android/iOS)
+// Set any of these to a value to add a limit; null means unlimited.
+// -----------------------------------------------------------------------------
+
+/// Max messages kept in the local chat cache (newest kept). Applied at app
+/// start. Example: `const int? kMessageCacheLimit = 5000;`
+const int? kMessageCacheLimit = null;
+
+/// Max number of media files (images, thumbnails, videos) kept on disk.
+/// Least recently used are evicted first. Example: `= 2000;`
+const int? kMediaCacheMaxFiles = null;
+
+/// Evict media not viewed for this long. Example: `= Duration(days: 90);`
+const Duration? kMediaCacheMaxAge = null;
+
+/// Save a video to the media cache the first time it's played, so it plays
+/// offline afterwards. That first play downloads it twice (stream + save).
+const bool kCacheVideos = true;

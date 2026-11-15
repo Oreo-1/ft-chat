@@ -1,6 +1,8 @@
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../cache/media_cache.dart';
 import '../models/file_meta.dart';
 import '../models/message.dart';
 import '../theme.dart';
@@ -55,6 +57,7 @@ class MessageBubble extends StatelessWidget {
                 for (final f in others)
                   _FileTile(
                     name: f,
+                    metaKey: mediaCacheKey(message.id, f),
                     url: message.fileUrl(f),
                     onTap: () => launchUrl(message.fileUrl(f, download: true),
                         mode: LaunchMode.externalApplication),
@@ -143,20 +146,18 @@ class _MediaTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final Widget content = isVideoFile(filename)
         ? VideoPlaceholder(width: width, height: height ?? width * 9 / 16)
-        : Image.network(
+        : CachedNetworkImage(
             // "480x0" thumb is declared on the files field in pb_schema.json.
-            message.fileUrl(filename, thumb: '480x0').toString(),
+            imageUrl: message.fileUrl(filename, thumb: '480x0').toString(),
+            cacheKey: mediaCacheKey(message.id, filename, thumb: '480x0'),
+            cacheManager: mediaCache,
             width: width,
             height: height,
             fit: BoxFit.cover,
-            frameBuilder: (context, child, frame, sync) => sync
-                ? child
-                : AnimatedOpacity(
-                    opacity: frame == null ? 0 : 1,
-                    duration: kAnimFast,
-                    child: child,
-                  ),
-            errorBuilder: (_, _, _) => SizedBox(
+            fadeInDuration: kAnimFast,
+            fadeOutDuration: Duration.zero,
+            placeholder: (_, _) => SizedBox(width: width, height: height ?? 160),
+            errorWidget: (_, _, _) => SizedBox(
               width: width,
               height: height ?? 120,
               child: const Icon(Icons.broken_image_outlined),
@@ -197,9 +198,15 @@ class VideoPlaceholder extends StatelessWidget {
 
 /// Non-media attachment: icon + name + "TYPE · size".
 class _FileTile extends StatelessWidget {
-  const _FileTile({required this.name, required this.url, required this.onTap});
+  const _FileTile({
+    required this.name,
+    required this.metaKey,
+    required this.url,
+    required this.onTap,
+  });
 
   final String name;
+  final String metaKey;
   final Uri url;
   final VoidCallback onTap;
 
@@ -229,7 +236,7 @@ class _FileTile extends StatelessWidget {
                 children: [
                   Text(displayFileName(name), maxLines: 2, overflow: TextOverflow.ellipsis),
                   FutureBuilder<FileMeta>(
-                    future: fetchFileMeta(url),
+                    future: fetchFileMeta(metaKey, url),
                     builder: (context, snap) {
                       final meta = snap.data;
                       final type = ext.isNotEmpty

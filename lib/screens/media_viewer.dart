@@ -1,7 +1,10 @@
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:video_player/video_player.dart';
 
+import '../cache/media_cache.dart';
+import '../config.dart';
 import '../models/message.dart';
 import '../theme.dart';
 
@@ -62,12 +65,15 @@ class _MediaViewerState extends State<MediaViewer> {
               return isVideoFile(f)
                   ? _VideoPage(
                       url: msg.fileUrl(f),
+                      cacheKey: mediaCacheKey(msg.id, f),
                       heroTag: msg.heroTag(f),
                       onTap: () => setState(() => _chrome = !_chrome),
                     )
                   : _ImagePage(
                       url: msg.fileUrl(f),
                       thumbUrl: msg.fileUrl(f, thumb: '480x0'),
+                      cacheKey: mediaCacheKey(msg.id, f),
+                      thumbCacheKey: mediaCacheKey(msg.id, f, thumb: '480x0'),
                       heroTag: msg.heroTag(f),
                       onTap: () => setState(() => _chrome = !_chrome),
                     );
@@ -147,12 +153,16 @@ class _ImagePage extends StatelessWidget {
   const _ImagePage({
     required this.url,
     required this.thumbUrl,
+    required this.cacheKey,
+    required this.thumbCacheKey,
     required this.heroTag,
     required this.onTap,
   });
 
   final Uri url;
   final Uri thumbUrl;
+  final String cacheKey;
+  final String thumbCacheKey;
   final String heroTag;
   final VoidCallback onTap;
 
@@ -165,25 +175,33 @@ class _ImagePage extends StatelessWidget {
         child: Center(
           child: Hero(
             tag: heroTag,
-            child: Image.network(
-              url.toString(),
+            child: CachedNetworkImage(
+              imageUrl: url.toString(),
+              cacheKey: cacheKey,
+              cacheManager: mediaCache,
               fit: BoxFit.contain,
-              // While the full image loads, show the (already cached) thumbnail
-              // so the hero flight and first frame aren't empty.
-              loadingBuilder: (context, child, progress) => progress == null
-                  ? child
-                  : Stack(
-                      alignment: Alignment.center,
-                      children: [
-                        Image.network(thumbUrl.toString(), fit: BoxFit.contain),
-                        const SizedBox(
-                          width: 28,
-                          height: 28,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        ),
-                      ],
-                    ),
-              errorBuilder: (_, _, _) =>
+              fadeInDuration: kAnimFast,
+              fadeOutDuration: Duration.zero,
+              // While the full image loads, show the (already cached)
+              // thumbnail so the hero flight and first frame aren't empty.
+              placeholder: (_, _) => Stack(
+                alignment: Alignment.center,
+                children: [
+                  CachedNetworkImage(
+                    imageUrl: thumbUrl.toString(),
+                    cacheKey: thumbCacheKey,
+                    cacheManager: mediaCache,
+                    fit: BoxFit.contain,
+                    fadeInDuration: Duration.zero,
+                  ),
+                  const SizedBox(
+                    width: 28,
+                    height: 28,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                ],
+              ),
+              errorWidget: (_, _, _) =>
                   const Icon(Icons.broken_image_outlined, color: Colors.white54, size: 48),
             ),
           ),
@@ -194,9 +212,15 @@ class _ImagePage extends StatelessWidget {
 }
 
 class _VideoPage extends StatefulWidget {
-  const _VideoPage({required this.url, required this.heroTag, required this.onTap});
+  const _VideoPage({
+    required this.url,
+    required this.cacheKey,
+    required this.heroTag,
+    required this.onTap,
+  });
 
   final Uri url;
+  final String cacheKey;
   final String heroTag;
   final VoidCallback onTap;
 
@@ -205,20 +229,39 @@ class _VideoPage extends StatefulWidget {
 }
 
 class _VideoPageState extends State<_VideoPage> {
-  late final VideoPlayerController _c = VideoPlayerController.networkUrl(widget.url);
+  VideoPlayerController? _c;
   bool _failed = false;
 
   @override
   void initState() {
     super.initState();
-    _c.initialize().then((_) {
+    _init();
+  }
+
+  /// Play from the media cache if this video was saved before (works
+  /// offline); otherwise stream it and, if enabled, save it in the background.
+  Future<void> _init() async {
+    final cached = await mediaCache.getFileFromCache(widget.cacheKey);
+    if (!mounted) return;
+
+    final c = cached != null
+        ? VideoPlayerController.file(cached.file)
+        : VideoPlayerController.networkUrl(widget.url);
+    if (cached == null && kCacheVideos) {
+      mediaCache
+          .downloadFile(widget.url.toString(), key: widget.cacheKey)
+          .then((_) {}, onError: (_) {});
+    }
+
+    _c = c..addListener(_onTick);
+    try {
+      await c.initialize();
       if (!mounted) return;
       setState(() {});
-      _c.play();
-    }, onError: (_) {
+      c.play();
+    } catch (_) {
       if (mounted) setState(() => _failed = true);
-    });
-    _c.addListener(_onTick);
+    }
   }
 
   void _onTick() {
@@ -227,18 +270,21 @@ class _VideoPageState extends State<_VideoPage> {
 
   @override
   void dispose() {
-    _c.removeListener(_onTick);
-    _c.dispose();
+    _c?.removeListener(_onTick);
+    _c?.dispose();
     super.dispose();
   }
 
   void _togglePlay() {
-    _c.value.isPlaying ? _c.pause() : _c.play();
+    final c = _c;
+    if (c == null) return;
+    c.value.isPlaying ? c.pause() : c.play();
   }
 
   @override
   Widget build(BuildContext context) {
-    final ready = _c.value.isInitialized;
+    final c = _c;
+    final ready = c != null && c.value.isInitialized;
 
     return GestureDetector(
       onTap: widget.onTap,
@@ -249,13 +295,13 @@ class _VideoPageState extends State<_VideoPage> {
           tag: widget.heroTag,
           child: ready
               ? AspectRatio(
-                  aspectRatio: _c.value.aspectRatio,
+                  aspectRatio: c!.value.aspectRatio,
                   child: Stack(
                     alignment: Alignment.center,
                     children: [
-                      VideoPlayer(_c),
+                      VideoPlayer(c!),
                       AnimatedOpacity(
-                        opacity: _c.value.isPlaying ? 0 : 1,
+                        opacity: c!.value.isPlaying ? 0 : 1,
                         duration: kAnimFast,
                         child: IconButton(
                           iconSize: 64,
@@ -268,13 +314,13 @@ class _VideoPageState extends State<_VideoPage> {
                         right: 0,
                         bottom: 0,
                         child: VideoProgressIndicator(
-                          _c,
+                          c!,
                           allowScrubbing: true,
                           padding: const EdgeInsets.symmetric(vertical: 12),
                         ),
                       ),
                       // Tap anywhere on the video (above the bar) to pause.
-                      if (_c.value.isPlaying)
+                      if (c!.value.isPlaying)
                         Positioned.fill(
                           bottom: 36,
                           child: GestureDetector(onTap: _togglePlay),

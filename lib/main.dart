@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:pocketbase/pocketbase.dart';
 
+import 'cache/message_cache.dart';
 import 'config.dart';
 import 'pb.dart';
 import 'screens/chat_screen.dart';
@@ -10,6 +11,7 @@ import 'theme.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await initPocketBase();
+  await MessageCache.open();
 
   // Refresh a stored session in the background so the token's lifetime is
   // extended. If the token is expired/revoked, the SDK clears the auth store

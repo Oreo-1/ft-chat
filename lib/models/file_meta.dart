@@ -1,7 +1,10 @@
 import 'package:http/http.dart' as http;
 
+import '../cache/message_cache.dart';
+
 /// Size / type of a stored file. PocketBase only keeps filenames on the
-/// record, so this is read from a HEAD request on the file URL and cached.
+/// record, so this is read once with a HEAD request on the file URL and then
+/// kept in memory and in the local cache DB (so it shows offline too).
 class FileMeta {
   const FileMeta({this.size, this.contentType});
 
@@ -9,22 +12,28 @@ class FileMeta {
   final String? contentType;
 }
 
-final Map<String, Future<FileMeta>> _cache = {};
+final Map<String, Future<FileMeta>> _memory = {};
 
-Future<FileMeta> fetchFileMeta(Uri url) {
-  return _cache[url.toString()] ??= _head(url);
+/// [key] identifies the file (record id + filename), [url] is where to HEAD it.
+Future<FileMeta> fetchFileMeta(String key, Uri url) {
+  return _memory[key] ??= _load(key, url);
 }
 
-Future<FileMeta> _head(Uri url) async {
+Future<FileMeta> _load(String key, Uri url) async {
+  final stored = await MessageCache.instance.fileMeta(key);
+  if (stored != null) return FileMeta(size: stored.$1, contentType: stored.$2);
+
   try {
     final res = await http.head(url).timeout(const Duration(seconds: 10));
-    if (res.statusCode != 200) return const FileMeta();
-    return FileMeta(
+    if (res.statusCode != 200) throw StateError('HEAD ${res.statusCode}');
+    final meta = FileMeta(
       size: int.tryParse(res.headers['content-length'] ?? ''),
       contentType: res.headers['content-type']?.split(';').first.trim(),
     );
+    await MessageCache.instance.putFileMeta(key, meta.size, meta.contentType);
+    return meta;
   } catch (_) {
-    _cache.remove(url.toString()); // allow a retry on next build
+    _memory.remove(key); // offline / failed: allow a retry on next build
     return const FileMeta();
   }
 }

@@ -6,6 +6,9 @@ import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:pocketbase/pocketbase.dart';
 
+import '../cache/media_cache.dart';
+import '../cache/message_cache.dart';
+import '../cache/message_sync.dart';
 import '../config.dart';
 import '../models/message.dart';
 import '../pb.dart';
@@ -44,6 +47,13 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
 
   RecordService get _col => pb.collection(kMessagesCollection);
 
+  /// The list is always read from the local cache; the network only writes
+  /// into it (see MessageSync). That's what makes it instant and offline-able.
+  late final String _uid = pb.authStore.record!.id;
+  late final MessageSync _sync = MessageSync(_uid);
+  MessageCache get _cache => MessageCache.instance;
+  DateTime? _olderFailedAt;
+
   // ---------------------------------------------------------------------------
   // Lifecycle
   // ---------------------------------------------------------------------------
@@ -56,7 +66,25 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     pb.realtime.onDisconnect = (_) {
       if (mounted) setState(() => _realtimeConnected = false);
     };
-    _connect();
+    _start();
+  }
+
+  /// Show the cached chat right away, then go online.
+  Future<void> _start() async {
+    await _sync.prune(); // apply kMessageCacheLimit (no-op when unlimited)
+    final rows = await _cache.latest(_uid, kPageSize);
+    final reached = await _cache.reachedStart(_uid);
+    if (!mounted) return;
+    if (rows.isNotEmpty) {
+      setState(() {
+        _messages
+          ..clear()
+          ..addAll(rows.map(Message.new));
+        _hasMore = rows.length >= kPageSize || !reached;
+        _initialLoading = false;
+      });
+    }
+    await _connect();
   }
 
   @override
@@ -125,10 +153,16 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     if (record == null || !mounted) return;
     final msg = Message(record);
     if (e.action == 'delete') {
+      _cache.delete(msg.id);
       _removeAnimated(msg.id);
       return;
     }
-    if (e.action == 'create') _markAppearing(msg.id);
+    if (e.action == 'create') {
+      _cache.upsertAll([record]); // newest message: extends the cache at the top
+      _markAppearing(msg.id);
+    } else {
+      _cache.updateIfCached(record); // edit
+    }
     setState(() => _upsert(msg)); // create / update
   }
 
@@ -166,94 +200,63 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     i < 0 ? _messages.add(msg) : _messages.insert(i, msg);
   }
 
-  /// Fetch the newest page and merge it with what's already loaded.
-  /// Concurrent calls share one request.
+  /// Sync the newest messages into the cache, then show the cache.
+  /// Concurrent calls share one run.
   Future<void> _loadLatest() {
     return _latestInFlight ??= _doLoadLatest().whenComplete(() => _latestInFlight = null);
   }
 
   Future<void> _doLoadLatest() async {
-    // Refetch the whole window that's currently loaded (not just 40), so edits
+    // Re-sync the whole window currently on screen (not just 40), so edits
     // and deletions made elsewhere while we were away are picked up too.
-    // Capped to keep the request reasonable if you've scrolled very far back.
-    final want = _messages.length.clamp(kPageSize, 500);
+    final depth = _messages.length < kPageSize ? kPageSize : _messages.length;
+    Object? error;
     try {
-      final res = await _col.getList(
-        page: 1,
-        perPage: want,
-        sort: '-created,-id',
-        skipTotal: true,
-      );
-      final fresh = res.items.map(Message.new).toList();
-      if (!mounted) return;
-
-      setState(() {
-        _error = null;
-        _initialLoading = false;
-
-        if (fresh.length < want) {
-          // That's the entire history.
-          _messages
-            ..clear()
-            ..addAll(fresh);
-          _hasMore = false;
-        } else if (_messages.isEmpty ||
-            _messages.first.created.compareTo(fresh.last.created) <= 0) {
-          // First load, or more arrived while we were away than this fetch
-          // covers (there'd be a gap) -> start over from the fresh page.
-          // Strict timestamp check: a new message created in the same ms as
-          // our newest one could sort below it by id, so don't trust overlap.
-          _messages
-            ..clear()
-            ..addAll(fresh);
-          _hasMore = true;
-        } else {
-          // Overlap: replace everything in the fresh page's range (drops
-          // messages deleted elsewhere) and keep the older ones we have.
-          final boundary = fresh.last;
-          final older = _messages.where((m) => m.compareTo(boundary) < 0).toList();
-          _messages
-            ..clear()
-            ..addAll(fresh)
-            ..addAll(older);
-        }
-      });
+      await _sync.syncLatest(depth);
     } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _initialLoading = false;
-        _error = _errorText(e);
-      });
+      error = e; // offline etc.: keep showing what's cached
     }
+
+    final rows = await _cache.latest(_uid, depth);
+    final reached = await _cache.reachedStart(_uid);
+    if (!mounted) return;
+    setState(() {
+      _initialLoading = false;
+      _error = error == null ? null : _errorText(error);
+      _messages
+        ..clear()
+        ..addAll(rows.map(Message.new));
+      _hasMore = rows.length >= depth || !reached;
+    });
   }
 
   Future<void> _loadOlder() async {
     if (_loadingOlder || !_hasMore || _messages.isEmpty) return;
+    // After a failed fetch (offline), don't retry on every scroll tick.
+    final failedAt = _olderFailedAt;
+    if (failedAt != null && DateTime.now().difference(failedAt) < const Duration(seconds: 5)) {
+      return;
+    }
     setState(() => _loadingOlder = true);
 
     final oldest = _messages.last;
     try {
-      final res = await _col.getList(
-        page: 1,
-        perPage: kPageSize,
-        sort: '-created,-id',
-        skipTotal: true,
-        // Cursor pagination: stable even while new messages keep arriving.
-        filter: pb.filter(
-          'created < {:c} || (created = {:c} && id < {:id})',
-          {'c': oldest.created, 'id': oldest.id},
-        ),
-      );
+      // Cache first; the server is only asked once the cache runs out.
+      final result = await _sync.older(oldest.record, kPageSize);
       if (!mounted) return;
       setState(() {
         // List may have been reset meanwhile (e.g. resume); then drop this page.
         if (_messages.isEmpty || _messages.last.id != oldest.id) return;
         final known = _messages.map((m) => m.id).toSet();
-        _messages.addAll(res.items.map(Message.new).where((m) => !known.contains(m.id)));
-        _hasMore = res.items.length == kPageSize;
+        _messages.addAll(result.rows.map(Message.new).where((m) => !known.contains(m.id)));
+        _hasMore = result.hasMore;
       });
-    } catch (e) {
-      _snack('Could not load older messages: ${_errorText(e)}');
+      if (result.error != null) {
+        _olderFailedAt = DateTime.now();
+        if (result.rows.isEmpty) _snack('Could not load older messages: ${_errorText(result.error!)}');
+      } else {
+        _olderFailedAt = null;
+      }
     } finally {
       if (mounted) setState(() => _loadingOlder = false);
     }
@@ -287,6 +290,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       files: multipart,
     );
 
+    await _cache.upsertAll([record]);
     if (!mounted) return;
     _markAppearing(record.id);
     setState(() => _upsert(Message(record)));
@@ -348,10 +352,12 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
 
     try {
       await _col.delete(msg.id);
+      await _cache.delete(msg.id);
       _removeAnimated(msg.id);
     } catch (e) {
       // 404 means it was already deleted from another device, so treat it as success.
       if (e is ClientException && e.statusCode == 404) {
+        await _cache.delete(msg.id);
         _removeAnimated(msg.id);
       } else {
         _snack('Delete failed: ${_errorText(e)}');
@@ -362,6 +368,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   Future<void> _logout() async {
     _retryTimer?.cancel();
     await pb.realtime.unsubscribe();
+    // Don't leave this account's chat and media on the device.
+    await _cache.clear();
+    await mediaCache.emptyCache();
     pb.authStore.clear(); // main.dart swaps back to the login screen
   }
 
