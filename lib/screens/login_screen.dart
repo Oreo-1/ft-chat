@@ -109,8 +109,6 @@ class _LoginScreenState extends State<LoginScreen> {
                           : const Text('Log in', key: ValueKey('idle')),
                     ),
                   ),
-                  const SizedBox(height: 24),
-                  Text(kPocketBaseUrl, style: theme.textTheme.bodySmall, textAlign: TextAlign.center),
                 ],
               ),
             ),

@@ -1,8 +1,8 @@
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
-import 'package:url_launcher/url_launcher.dart';
 import 'package:video_player/video_player.dart';
 
+import '../cache/downloads.dart';
 import '../cache/media_cache.dart';
 import '../config.dart';
 import '../models/message.dart';
@@ -105,12 +105,7 @@ class _MediaViewerState extends State<MediaViewer> {
                           overflow: TextOverflow.ellipsis,
                         ),
                       ),
-                      IconButton(
-                        icon: const Icon(Icons.download_outlined, color: Colors.white),
-                        tooltip: 'Download',
-                        onPressed: () => launchUrl(msg.fileUrl(current, download: true),
-                            mode: LaunchMode.externalApplication),
-                      ),
+                      _DownloadButton(message: msg, filename: current),
                     ],
                   ),
                 ),
@@ -295,13 +290,13 @@ class _VideoPageState extends State<_VideoPage> {
           tag: widget.heroTag,
           child: ready
               ? AspectRatio(
-                  aspectRatio: c!.value.aspectRatio,
+                  aspectRatio: c.value.aspectRatio,
                   child: Stack(
                     alignment: Alignment.center,
                     children: [
-                      VideoPlayer(c!),
+                      VideoPlayer(c),
                       AnimatedOpacity(
-                        opacity: c!.value.isPlaying ? 0 : 1,
+                        opacity: c.value.isPlaying ? 0 : 1,
                         duration: kAnimFast,
                         child: IconButton(
                           iconSize: 64,
@@ -314,13 +309,13 @@ class _VideoPageState extends State<_VideoPage> {
                         right: 0,
                         bottom: 0,
                         child: VideoProgressIndicator(
-                          c!,
+                          c,
                           allowScrubbing: true,
                           padding: const EdgeInsets.symmetric(vertical: 12),
                         ),
                       ),
                       // Tap anywhere on the video (above the bar) to pause.
-                      if (c!.value.isPlaying)
+                      if (c.value.isPlaying)
                         Positioned.fill(
                           bottom: 36,
                           child: GestureDetector(onTap: _togglePlay),
@@ -335,7 +330,7 @@ class _VideoPageState extends State<_VideoPage> {
                     children: [
                       const ColoredBox(color: Colors.black, child: SizedBox.expand()),
                       if (_failed)
-                        const Text('Could not play this video.\nUse download instead.',
+                        const Text('Could not play this video here.\nDownload it to open in another app.',
                             textAlign: TextAlign.center, style: TextStyle(color: Colors.white70))
                       else
                         const CircularProgressIndicator(strokeWidth: 2),
@@ -344,6 +339,62 @@ class _VideoPageState extends State<_VideoPage> {
                 ),
         ),
       ),
+    );
+  }
+}
+
+/// Top-bar button: download in-app (progress ring, tap to cancel), then
+/// "open" with the device's gallery / player app.
+class _DownloadButton extends StatelessWidget {
+  const _DownloadButton({required this.message, required this.filename});
+
+  final Message message;
+  final String filename;
+
+  @override
+  Widget build(BuildContext context) {
+    final downloads = Downloads.instance;
+    return ValueListenableBuilder<DownloadState>(
+      valueListenable: downloads.state(message, filename),
+      builder: (context, state, _) {
+        final (Widget icon, String tip, VoidCallback onTap) = switch (state) {
+          DownloadRunning(:final progress) => (
+              SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(
+                    value: progress, strokeWidth: 2, color: Colors.white),
+              ),
+              'Cancel download',
+              () => downloads.cancel(message, filename),
+            ),
+          DownloadDone(:final path) => (
+              const Icon(Icons.open_in_new, color: Colors.white),
+              'Open in another app',
+              () async {
+                final err = await downloads.open(path);
+                if (err != null && context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(err)));
+                }
+              },
+            ),
+          DownloadFailed() => (
+              const Icon(Icons.error_outline, color: Colors.white),
+              'Download failed, tap to retry',
+              () => downloads.start(message, filename),
+            ),
+          DownloadIdle() => (
+              const Icon(Icons.download_outlined, color: Colors.white),
+              'Download',
+              () => downloads.start(message, filename),
+            ),
+        };
+        return IconButton(
+          tooltip: tip,
+          onPressed: onTap,
+          icon: AnimatedSwitcher(duration: kAnimFast, child: KeyedSubtree(key: ValueKey(tip), child: icon)),
+        );
+      },
     );
   }
 }

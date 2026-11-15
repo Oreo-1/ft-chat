@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:pocketbase/pocketbase.dart';
 
+import '../cache/downloads.dart';
 import '../cache/media_cache.dart';
 import '../cache/message_cache.dart';
 import '../cache/message_sync.dart';
@@ -17,6 +18,7 @@ import '../widgets/animated_dialog.dart';
 import '../widgets/animated_entry.dart';
 import '../widgets/composer.dart';
 import '../widgets/message_bubble.dart';
+import 'file_viewer.dart';
 import 'media_viewer.dart';
 
 class ChatScreen extends StatefulWidget {
@@ -371,6 +373,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     // Don't leave this account's chat and media on the device.
     await _cache.clear();
     await mediaCache.emptyCache();
+    await Downloads.instance.clearAll();
     pb.authStore.clear(); // main.dart swaps back to the login screen
   }
 
@@ -472,6 +475,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
             message: msg,
             onLongPress: (pos) => _showMenu(msg, pos),
             onOpenMedia: (index) => MediaViewer.open(context, msg, index),
+            onOpenFile: (filename, origin) => FileViewer.open(context, msg, filename, origin),
           ),
         );
       },

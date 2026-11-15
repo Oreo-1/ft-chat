@@ -1,10 +1,11 @@
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
-import 'package:url_launcher/url_launcher.dart';
 
+import '../cache/downloads.dart';
 import '../cache/media_cache.dart';
 import '../models/file_meta.dart';
 import '../models/message.dart';
+import '../screens/file_viewer.dart' show FileTypeIcon, fileHeroTag;
 import '../theme.dart';
 
 /// One chat bubble: media, other files, text, then "device · time".
@@ -15,6 +16,7 @@ class MessageBubble extends StatelessWidget {
     required this.message,
     required this.onLongPress,
     required this.onOpenMedia,
+    required this.onOpenFile,
   });
 
   final Message message;
@@ -24,6 +26,9 @@ class MessageBubble extends StatelessWidget {
 
   /// Called with the index into [Message.media] that was tapped.
   final void Function(int mediaIndex) onOpenMedia;
+
+  /// Called with a non-media file and the tapped tile's global rect.
+  final void Function(String filename, Rect origin) onOpenFile;
 
   @override
   Widget build(BuildContext context) {
@@ -56,11 +61,9 @@ class MessageBubble extends StatelessWidget {
                 if (media.isNotEmpty) _MediaGrid(message: message, onOpen: onOpenMedia),
                 for (final f in others)
                   _FileTile(
+                    message: message,
                     name: f,
-                    metaKey: mediaCacheKey(message.id, f),
-                    url: message.fileUrl(f),
-                    onTap: () => launchUrl(message.fileUrl(f, download: true),
-                        mode: LaunchMode.externalApplication),
+                    onTap: (origin) => onOpenFile(f, origin),
                   ),
                 if (message.text.isNotEmpty)
                   Padding(
@@ -198,17 +201,13 @@ class VideoPlaceholder extends StatelessWidget {
 
 /// Non-media attachment: icon + name + "TYPE · size".
 class _FileTile extends StatelessWidget {
-  const _FileTile({
-    required this.name,
-    required this.metaKey,
-    required this.url,
-    required this.onTap,
-  });
+  const _FileTile({required this.message, required this.name, required this.onTap});
 
+  final Message message;
   final String name;
-  final String metaKey;
-  final Uri url;
-  final VoidCallback onTap;
+
+  /// Receives this tile's rect in global coordinates (where the popup zooms from).
+  final void Function(Rect origin) onTap;
 
   @override
   Widget build(BuildContext context) {
@@ -216,7 +215,10 @@ class _FileTile extends StatelessWidget {
     final small = Theme.of(context).textTheme.labelSmall;
 
     return InkWell(
-      onTap: onTap,
+      onTap: () {
+        final box = context.findRenderObject()! as RenderBox;
+        onTap(box.localToGlobal(Offset.zero) & box.size);
+      },
       borderRadius: kBorderRadius,
       child: Container(
         width: 240,
@@ -228,7 +230,7 @@ class _FileTile extends StatelessWidget {
         ),
         child: Row(
           children: [
-            const Icon(Icons.attach_file, size: 28),
+            FileTypeIcon(filename: name, size: 28, heroTag: fileHeroTag(message, name)),
             const SizedBox(width: 8),
             Expanded(
               child: Column(
@@ -236,7 +238,7 @@ class _FileTile extends StatelessWidget {
                 children: [
                   Text(displayFileName(name), maxLines: 2, overflow: TextOverflow.ellipsis),
                   FutureBuilder<FileMeta>(
-                    future: fetchFileMeta(metaKey, url),
+                    future: fetchFileMeta(mediaCacheKey(message.id, name), message.fileUrl(name)),
                     builder: (context, snap) {
                       final meta = snap.data;
                       final type = ext.isNotEmpty
@@ -254,7 +256,24 @@ class _FileTile extends StatelessWidget {
                 ],
               ),
             ),
-            const Icon(Icons.download_outlined, size: 20),
+            // Download status: progress ring / saved check / chevron.
+            ValueListenableBuilder<DownloadState>(
+              valueListenable: Downloads.instance.state(message, name),
+              builder: (context, state, _) => AnimatedSwitcher(
+                duration: kAnimFast,
+                child: switch (state) {
+                  DownloadRunning(:final progress) => SizedBox(
+                      key: const ValueKey('running'),
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(value: progress, strokeWidth: 2),
+                    ),
+                  DownloadDone() => const Icon(Icons.download_done,
+                      key: ValueKey('done'), size: 20),
+                  _ => const Icon(Icons.chevron_right, key: ValueKey('idle'), size: 20),
+                },
+              ),
+            ),
           ],
         ),
       ),

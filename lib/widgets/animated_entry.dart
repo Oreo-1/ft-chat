@@ -55,7 +55,7 @@ class _AnimatedEntryState extends State<AnimatedEntry> with SingleTickerProvider
   Widget build(BuildContext context) {
     return SizeTransition(
       sizeFactor: _curve,
-      axisAlignment: -1,
+      alignment: Alignment.topCenter,
       child: FadeTransition(
         opacity: _curve,
         child: SlideTransition(
