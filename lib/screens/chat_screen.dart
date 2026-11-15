@@ -9,8 +9,12 @@ import 'package:pocketbase/pocketbase.dart';
 import '../config.dart';
 import '../models/message.dart';
 import '../pb.dart';
+import '../theme.dart';
+import '../widgets/animated_dialog.dart';
+import '../widgets/animated_entry.dart';
 import '../widgets/composer.dart';
 import '../widgets/message_bubble.dart';
+import 'media_viewer.dart';
 
 class ChatScreen extends StatefulWidget {
   const ChatScreen({super.key});
@@ -33,6 +37,10 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   bool _ownConnect = false;
   bool _realtimeConnected = false;
   Timer? _retryTimer;
+
+  /// Ids that should animate in (just sent / arrived live) or out (deleted).
+  final Set<String> _appearing = {};
+  final Set<String> _removing = {};
 
   RecordService get _col => pb.collection(kMessagesCollection);
 
@@ -116,12 +124,31 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     final record = e.record;
     if (record == null || !mounted) return;
     final msg = Message(record);
-    setState(() {
-      if (e.action == 'delete') {
-        _messages.removeWhere((m) => m.id == msg.id);
-      } else {
-        _upsert(msg); // create / update
-      }
+    if (e.action == 'delete') {
+      _removeAnimated(msg.id);
+      return;
+    }
+    if (e.action == 'create') _markAppearing(msg.id);
+    setState(() => _upsert(msg)); // create / update
+  }
+
+  void _markAppearing(String id) {
+    _appearing.add(id);
+    // Forget it after the animation, so it doesn't replay when the bubble is
+    // scrolled off and rebuilt later.
+    Future.delayed(kAnimMedium * 2, () => _appearing.remove(id));
+  }
+
+  /// Collapse the bubble, then drop it from the list.
+  void _removeAnimated(String id) {
+    if (_removing.contains(id) || !_messages.any((m) => m.id == id)) return;
+    setState(() => _removing.add(id));
+    Future.delayed(kAnimMedium, () {
+      if (!mounted) return;
+      setState(() {
+        _messages.removeWhere((m) => m.id == id);
+        _removing.remove(id);
+      });
     });
   }
 
@@ -261,32 +288,34 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     );
 
     if (!mounted) return;
+    _markAppearing(record.id);
     setState(() => _upsert(Message(record)));
     if (_scroll.hasClients) {
       _scroll.animateTo(0, duration: const Duration(milliseconds: 200), curve: Curves.easeOut);
     }
   }
 
-  Future<void> _showMenu(Message msg) async {
-    final action = await showModalBottomSheet<String>(
+  /// Long-press menu, shown as a popup at the press position.
+  Future<void> _showMenu(Message msg, Offset globalPosition) async {
+    HapticFeedback.selectionClick();
+    final overlay = Overlay.of(context).context.findRenderObject()! as RenderBox;
+
+    PopupMenuItem<String> item(String value, IconData icon, String label) => PopupMenuItem(
+          value: value,
+          height: 44,
+          child: Row(children: [Icon(icon, size: 20), const SizedBox(width: 12), Text(label)]),
+        );
+
+    final action = await showMenu<String>(
       context: context,
-      builder: (context) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ListTile(
-              leading: const Icon(Icons.copy),
-              title: Text(msg.text.isNotEmpty ? 'Copy text' : 'Copy file link(s)'),
-              onTap: () => Navigator.pop(context, 'copy'),
-            ),
-            ListTile(
-              leading: const Icon(Icons.delete_outline),
-              title: const Text('Delete'),
-              onTap: () => Navigator.pop(context, 'delete'),
-            ),
-          ],
-        ),
+      position: RelativeRect.fromRect(
+        globalPosition & const Size(1, 1),
+        Offset.zero & overlay.size,
       ),
+      items: [
+        item('copy', Icons.copy, msg.text.isNotEmpty ? 'Copy text' : 'Copy file link(s)'),
+        item('delete', Icons.delete_outline, 'Delete'),
+      ],
     );
 
     switch (action) {
@@ -302,7 +331,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   }
 
   Future<void> _delete(Message msg) async {
-    final ok = await showDialog<bool>(
+    final ok = await showAnimatedDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Delete message?'),
@@ -319,11 +348,11 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
 
     try {
       await _col.delete(msg.id);
-      if (mounted) setState(() => _messages.removeWhere((m) => m.id == msg.id));
+      _removeAnimated(msg.id);
     } catch (e) {
       // 404 means it was already deleted from another device, so treat it as success.
       if (e is ClientException && e.statusCode == 404) {
-        if (mounted) setState(() => _messages.removeWhere((m) => m.id == msg.id));
+        _removeAnimated(msg.id);
       } else {
         _snack('Delete failed: ${_errorText(e)}');
       }
@@ -355,15 +384,34 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           // Tiny realtime status dot; restyle later.
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 8),
-            child: Icon(Icons.circle, size: 10,
-                color: _realtimeConnected ? Colors.green : Colors.grey),
+            child: Tooltip(
+              message: _realtimeConnected ? 'Live' : 'Offline',
+              child: AnimatedContainer(
+                duration: kAnimMedium,
+                width: 10,
+                height: 10,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: _realtimeConnected ? Colors.green : Colors.grey,
+                ),
+              ),
+            ),
           ),
           IconButton(icon: const Icon(Icons.logout), tooltip: 'Log out', onPressed: _logout),
         ],
       ),
       body: Column(
         children: [
-          Expanded(child: _buildList()),
+          Expanded(
+            child: AnimatedSwitcher(
+              duration: kAnimMedium,
+              child: KeyedSubtree(
+                // Fade between loading / empty / list states.
+                key: ValueKey(_initialLoading ? 'loading' : (_messages.isEmpty ? 'empty' : 'list')),
+                child: _buildList(),
+              ),
+            ),
+          ),
           Composer(onSend: _send),
         ],
       ),
@@ -407,10 +455,15 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           );
         }
         final msg = _messages[i];
-        return MessageBubble(
+        return AnimatedEntry(
           key: ValueKey(msg.id),
-          message: msg,
-          onLongPress: () => _showMenu(msg),
+          appear: _appearing.contains(msg.id),
+          removing: _removing.contains(msg.id),
+          child: MessageBubble(
+            message: msg,
+            onLongPress: (pos) => _showMenu(msg, pos),
+            onOpenMedia: (index) => MediaViewer.open(context, msg, index),
+          ),
         );
       },
     );

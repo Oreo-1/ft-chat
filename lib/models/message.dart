@@ -21,6 +21,15 @@ class Message {
 
   bool get isMine => device == kDeviceName;
 
+  /// Images and videos, in upload order (shown in the media viewer).
+  List<String> get media => files.where((f) => isImageFile(f) || isVideoFile(f)).toList();
+
+  /// Everything that isn't an image or video.
+  List<String> get otherFiles => files.where((f) => !isImageFile(f) && !isVideoFile(f)).toList();
+
+  /// Hero tag linking a bubble's media to the fullscreen viewer.
+  String heroTag(String filename) => 'media/$id/$filename';
+
   Uri fileUrl(String filename, {String? thumb, bool download = false}) =>
       pb.files.getURL(record, filename, thumb: thumb, download: download ? true : null);
 

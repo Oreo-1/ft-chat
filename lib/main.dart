@@ -5,6 +5,7 @@ import 'config.dart';
 import 'pb.dart';
 import 'screens/chat_screen.dart';
 import 'screens/login_screen.dart';
+import 'theme.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -28,12 +29,32 @@ class FtChatApp extends StatelessWidget {
     return MaterialApp(
       title: 'ft-chat',
       debugShowCheckedModeBanner: false,
+      theme: buildDarkTheme(),
+      darkTheme: buildDarkTheme(),
+      themeMode: ThemeMode.dark,
       home: StreamBuilder<AuthStoreEvent>(
         stream: pb.authStore.onChange,
         builder: (context, _) {
-          return pb.authStore.isValid
-              ? const ChatScreen()
-              : const LoginScreen();
+          final loggedIn = pb.authStore.isValid;
+          // Login <-> chat swap: fade + slight upward slide. Keys make the
+          // switcher animate only when the screen actually changes (not on
+          // token refreshes).
+          return AnimatedSwitcher(
+            duration: kAnimMedium,
+            switchInCurve: Curves.easeOutCubic,
+            switchOutCurve: Curves.easeInCubic,
+            transitionBuilder: (child, animation) => FadeTransition(
+              opacity: animation,
+              child: SlideTransition(
+                position: Tween(begin: const Offset(0, 0.03), end: Offset.zero)
+                    .animate(animation),
+                child: child,
+              ),
+            ),
+            child: loggedIn
+                ? const ChatScreen(key: ValueKey('chat'))
+                : const LoginScreen(key: ValueKey('login')),
+          );
         },
       ),
     );

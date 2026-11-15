@@ -3,6 +3,7 @@ import 'package:pocketbase/pocketbase.dart';
 
 import '../config.dart';
 import '../pb.dart';
+import '../theme.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -47,45 +48,71 @@ class _LoginScreenState extends State<LoginScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
     return Scaffold(
-      appBar: AppBar(title: const Text('ft-chat')),
       body: Center(
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(24),
-          child: AutofillGroup(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                TextField(
-                  controller: _username,
-                  decoration: const InputDecoration(labelText: 'Username'),
-                  autofillHints: const [AutofillHints.username],
-                  autocorrect: false,
-                  textInputAction: TextInputAction.next,
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: _password,
-                  decoration: const InputDecoration(labelText: 'Password'),
-                  autofillHints: const [AutofillHints.password],
-                  obscureText: true,
-                  onSubmitted: (_) => _login(),
-                ),
-                const SizedBox(height: 24),
-                if (_error != null) ...[
-                  Text(_error!, style: const TextStyle(color: Colors.red)),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 400),
+            child: AutofillGroup(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text('ft-chat', style: theme.textTheme.headlineMedium, textAlign: TextAlign.center),
+                  const SizedBox(height: 32),
+                  // Outlined borders come from inputDecorationTheme in theme.dart.
+                  TextField(
+                    controller: _username,
+                    decoration: const InputDecoration(
+                      labelText: 'Username',
+                      prefixIcon: Icon(Icons.person_outline),
+                    ),
+                    autofillHints: const [AutofillHints.username],
+                    autocorrect: false,
+                    textInputAction: TextInputAction.next,
+                  ),
                   const SizedBox(height: 12),
+                  TextField(
+                    controller: _password,
+                    decoration: const InputDecoration(
+                      labelText: 'Password',
+                      prefixIcon: Icon(Icons.lock_outline),
+                    ),
+                    autofillHints: const [AutofillHints.password],
+                    obscureText: true,
+                    onSubmitted: (_) => _login(),
+                  ),
+                  // Error message slides open/closed.
+                  AnimatedSize(
+                    duration: kAnimFast,
+                    curve: Curves.easeOutCubic,
+                    child: _error == null
+                        ? const SizedBox(height: 24, width: double.infinity)
+                        : Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                            child: Text(_error!, style: TextStyle(color: theme.colorScheme.error)),
+                          ),
+                  ),
+                  FilledButton(
+                    onPressed: _busy ? null : _login,
+                    child: AnimatedSwitcher(
+                      duration: kAnimFast,
+                      child: _busy
+                          ? const SizedBox(
+                              key: ValueKey('busy'),
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2))
+                          : const Text('Log in', key: ValueKey('idle')),
+                    ),
+                  ),
+                  const SizedBox(height: 24),
+                  Text(kPocketBaseUrl, style: theme.textTheme.bodySmall, textAlign: TextAlign.center),
                 ],
-                FilledButton(
-                  onPressed: _busy ? null : _login,
-                  child: _busy
-                      ? const SizedBox(
-                          width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
-                      : const Text('Log in'),
-                ),
-                const SizedBox(height: 24),
-                Text(kPocketBaseUrl, style: Theme.of(context).textTheme.bodySmall),
-              ],
+              ),
             ),
           ),
         ),

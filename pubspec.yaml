@@ -14,12 +14,31 @@ dependencies:
   file_picker: ^13.3.3
   url_launcher: ^6.3.3
   http: ^1.6.0
+  video_player: ^2.14.1
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^6.0.0
   change_app_package_name: ^1.5.0
+  flutter_launcher_icons: ^0.14.4
 
 flutter:
   uses-material-design: true
+
+flutter_launcher_icons:
+  image_path: "assets/app-icon.png"   # 1024x1024 PNG, no transparency for iOS
+  android: true
+  # ios: true
+  # remove_alpha_ios: true               # iOS rejects icons with an alpha channel
+
+  # Android adaptive icon (recommended)
+  # adaptive_icon_background: "#FFFFFF"  # color or image path
+  # adaptive_icon_foreground: "assets/icon/icon_foreground.png"
+
+  # web:
+  #   generate: true
+  # windows:
+  #   generate: true
+  # macos:
+  #   generate: true
