@@ -1,4 +1,4 @@
-package alim.chat.ft.chat_ft
+package fyi.aryo.ftchat
 
 import io.flutter.embedding.android.FlutterActivity
 

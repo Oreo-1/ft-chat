@@ -1,39 +1,40 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
+import 'package:pocketbase/pocketbase.dart';
 
-import 'backend.dart';
-import 'chat_page.dart';
-import 'login_page.dart';
+import 'config.dart';
+import 'pb.dart';
+import 'screens/chat_screen.dart';
+import 'screens/login_screen.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  final backend = await Backend.init();
-  runApp(FtChat(backend: backend));
-  unawaited(backend.refreshAuth()); // don't block startup (may be offline)
+  await initPocketBase();
+
+  // Refresh a stored session in the background so the token's lifetime is
+  // extended. If the token is expired/revoked, the SDK clears the auth store
+  // on the 401 and the app falls back to the login screen.
+  if (pb.authStore.isValid) {
+    pb.collection(kUsersCollection).authRefresh().then((_) {}, onError: (_) {});
+  }
+
+  runApp(const FtChatApp());
 }
 
-class FtChat extends StatelessWidget {
-  const FtChat({super.key, required this.backend});
-  final Backend backend;
-
-  ThemeData _theme(Brightness b) => ThemeData(
-        useMaterial3: true,
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.teal, brightness: b),
-      );
+class FtChatApp extends StatelessWidget {
+  const FtChatApp({super.key});
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
+      title: 'ft-chat',
       debugShowCheckedModeBanner: false,
-      theme: _theme(Brightness.light),
-      darkTheme: _theme(Brightness.dark),
-      themeMode: ThemeMode.system,
-      home: ListenableBuilder(
-        listenable: backend,
-        builder: (context, _) => backend.isLoggedIn
-            ? ChatPage(key: ValueKey(backend.serverUrl), backend: backend)
-            : LoginPage(backend: backend),
+      home: StreamBuilder<AuthStoreEvent>(
+        stream: pb.authStore.onChange,
+        builder: (context, _) {
+          return pb.authStore.isValid
+              ? const ChatScreen()
+              : const LoginScreen();
+        },
       ),
     );
   }

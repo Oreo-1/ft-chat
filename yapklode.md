@@ -1,114 +1,60 @@
-# Stash: personal chat-to-yourself (Flutter client)
+# ft-chat
 
-A WhatsApp/Discord-style "chat with myself" for notes and file transfer, backed by your own PocketBase.
-This is the mobile client (Android/iOS). The desktop client (Tauri/Electron) can use the same collection.
+A personal chat with yourself across your devices: notes and file transfer, stored in PocketBase.
 
-> The code was written against the current PocketBase Dart SDK docs but has **not been compiled yet**.
-> Run `flutter analyze` first and expect to fix a small thing or two.
+## 1. PocketBase
 
----
+1. Admin UI → **Settings → Import collections** → paste or load `pb_schema.json`.
+   Leave **"Delete missing collections"** unchecked so your existing collections stay as they are.
+   This creates:
+   - `ft_users` (auth): `username` + `password`, log in by username, email optional, no self-registration (`createRule` is null).
+   - `ft_messages`: `user` (relation), `text`, `files` (up to 20, 100 MiB each, `480x0` thumbnails), `device`, `created`, `updated`.
+     Every rule is "owner only", so realtime events only go to your own sessions.
+2. Create your user in the admin UI: `ft_users` → New record → username + password.
 
-## 1. PocketBase setup (v0.23+)
+## 2. Flutter app
 
-### Lock down the `users` collection (important)
-The default `users` collection lets **anyone** sign up. Open Admin UI → Collections → `users` → API Rules
-and set **Create rule** to "Set superusers only" (the lock icon). Then create your own user manually
-(Admin UI → `users` → New record). Nobody else can register.
-
-### Create the `messages` collection
-Type **Base**, name `messages`, with these fields:
-
-| Field    | Type       | Options |
-|----------|------------|---------|
-| `text`   | Plain text | not required |
-| `files`  | File       | **Max select: 99**, **Max size: e.g. 524288000** (500 MB, in bytes; the default is only ~5 MB), **Protected: on**, **Thumb sizes: `400x0`** |
-| `device` | Plain text | not required (`mobile` / `desktop`) |
-| `created`| Autodate   | on create (usually added by default) |
-| `updated`| Autodate   | on create + update (usually added by default) |
-
-**API rules**, all five (List, View, Create, Update, Delete):
-
-```
-@request.auth.id != ""
-```
-
-Without the `created` autodate field, sorting and pagination won't work.
-
-### Reverse proxy
-- **Caddy** (simplest, automatic HTTPS): `pb.example.com { reverse_proxy 127.0.0.1:8090 }`
-- **nginx**: set `client_max_body_size 0;`, `proxy_request_buffering off;`, `proxy_buffering off;`
-  (the last one matters for realtime/SSE) and a long `proxy_read_timeout`.
-- Cloudflare Tunnel/proxy caps uploads at 100 MB on free plans. Tailscale avoids this entirely.
-
----
-
-## 2. Flutter project
-
-```bash
-flutter create --org com.yourname --project-name stash .   # inside this folder
-```
-
-Replace the `dependencies:` section of `pubspec.yaml` with:
-
-```yaml
-dependencies:
-  flutter:
-    sdk: flutter
-  pocketbase: ^0.25.1
-  shared_preferences: ^2.3.0
-  file_picker: ^10.0.0
-  http: ^1.2.0
-  path_provider: ^2.1.0
-  open_filex: ^4.5.0
-  share_plus: ^11.0.0
-  cached_network_image: ^3.4.0
-```
-
-Then:
-
-```bash
+```sh
+# from this folder: generates android/ and ios/ next to the existing lib/ and pubspec.yaml
+flutter create --project-name ft_chat --org com.yourname --platforms=android,ios .
 flutter pub get
-flutter analyze
-flutter run
+flutter run --dart-define=PB_URL=https://pb.yourdomain.tld
 ```
 
-`lib/` is already in place (`main.dart`, `backend.dart`, `login_page.dart`, `chat_page.dart`, `message_bubble.dart`).
+Or change the default URL in `lib/config.dart`.
 
-> Versions are pinned on purpose: `file_picker` (v12 changed its API) and `share_plus` (v11 changed its API)
-> have moved fast. If you bump them, adjust `FilePicker.platform.pickFiles` and `SharePlus.instance.share`.
+Platform bits after `flutter create`:
+- **Android** `android/app/src/main/AndroidManifest.xml`:
+  - add `<uses-permission android:name="android.permission.INTERNET"/>` above `<application>` (debug builds have it, release builds don't).
+  - set `android:label="ft-chat"`.
+  - inside `<manifest>`, add this so url_launcher can open links:
+    ```xml
+    <queries>
+      <intent><action android:name="android.intent.action.VIEW"/><data android:scheme="https"/></intent>
+    </queries>
+    ```
+- **iOS** `ios/Runner/Info.plist`: add `NSPhotoLibraryUsageDescription` (needed for the photo/video picker) and set `CFBundleDisplayName` to `ft-chat`.
 
-### Android
-`android/app/src/main/AndroidManifest.xml`, inside `<manifest>` (before `<application>`):
+## How it works
 
-```xml
-<uses-permission android:name="android.permission.INTERNET"/>
-```
+| Feature | Where |
+|---|---|
+| Login (username/password, saved across restarts) | `lib/pb.dart`, `lib/screens/login_screen.dart` |
+| Realtime: subscribes to `ft_messages`. On resume it reconnects and refetches; it also refetches when the SDK reconnects by itself | `ChatScreen._connect`, `_subscribe` |
+| History: newest 40, cursor-paginated (`created`/`id`) while scrolling up | `_loadLatest`, `_loadOlder` |
+| Long-press → copy (text, or file links) / delete | `_showMenu` |
+| `device` field → `mobile` on the right, everything else on the left | `kDeviceName`, `MessageBubble` |
+| Upload limit (95 MiB per message, under Cloudflare's 100 MB request cap) | `kMaxUploadBytes` |
 
-Flutter only adds this for debug builds, so release builds fail silently without it.
-If you test against plain `http://` (e.g. LAN IP), also add `android:usesCleartextTraffic="true"` to `<application>`.
-Prefer HTTPS for anything real.
+### Desktop client contract
+- Auth: `POST /api/collections/ft_users/auth-with-password` with `{identity: username, password}`.
+- Create a message: multipart `POST /api/collections/ft_messages/records` with `user=<auth id>`, `device=desktop`, optional `text`, and zero or more `files`.
+- List: `sort=-created,-id`, `perPage=40`, and for older pages
+  `filter=created < "<oldest.created>" || (created = "<oldest.created>" && id < "<oldest.id>")`.
+- Realtime: subscribe to `ft_messages/*`.
 
-### iOS
-Plain `http://` needs an ATS exception in `ios/Runner/Info.plist` (`NSAppTransportSecurity` →
-`NSAllowsLocalNetworking` or `NSAllowsArbitraryLoads`). HTTPS needs nothing.
-
----
-
-## 3. How it works
-
-- **Auth**: email/password against the `users` collection; the session is stored in `shared_preferences` and refreshed on launch.
-- **History**: newest 40 messages, older ones load as you scroll up (cursor on `created`).
-- **Realtime**: subscribes to `messages/*`; messages from your other devices appear instantly. Refetches when the app returns to the foreground.
-- **Send**: text goes as a message; the 📎 button picks any number of files and sends them as one message (the text box becomes the caption).
-- **Files**: protected, so access uses short-lived file tokens (renewed every ~100 s). Tap to download and open, share icon to save elsewhere, long-press a bubble to copy/delete.
-- **Names**: PocketBase appends `_xxxxxxxxxx` to stored filenames; the app strips it for display and downloads.
-- `Backend.deviceName` is stored in `device` so bubbles align left/right. Use `'desktop'` in your desktop client.
-
-## 4. Known limits / next steps
-
-1. **Receive shares from other apps** (the killer feature: "Share → Stash" from the gallery/browser). Look at `receive_sharing_intent` or `share_handler`.
-2. **Upload progress**: the SDK doesn't expose it; use a plain `http.MultipartRequest` with a progress-reporting stream.
-3. **Offline queue**: failed sends currently restore the text and show an error.
-4. **Background/large uploads**: Android may kill long uploads when the app is backgrounded (needs a foreground service, e.g. `flutter_background_service`/`workmanager`).
-5. **Search, pinned notes, tags, markdown rendering**.
-6. **Cleanup**: downloaded files live in the OS cache dir; add a "clear cache" action if it grows.
+## Known limitations / next steps
+- **File URLs are unprotected.** Anyone who has the exact URL can download the file. URLs include a random record id and a random filename suffix, but if you want token-gated files, set `protected: true` on the `files` field and append `pb.files.getToken()` to the URLs.
+- No upload progress bar. The SDK's multipart request doesn't report progress, so use `http.StreamedRequest` if you want one.
+- Tapping a file opens it in the browser (images full size, videos inline, other files as a download).
+- Not done yet: sharing into the app from other apps (`receive_sharing_intent`), message editing, local cache for offline viewing.

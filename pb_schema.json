@@ -1,0 +1,250 @@
+[
+  {
+    "id": "pbc_ftusers00001",
+    "name": "ft_users",
+    "type": "auth",
+    "system": false,
+    "listRule": "id = @request.auth.id",
+    "viewRule": "id = @request.auth.id",
+    "createRule": null,
+    "updateRule": "id = @request.auth.id",
+    "deleteRule": null,
+    "authRule": "",
+    "manageRule": null,
+    "fields": [
+      {
+        "id": "text_ftusers_id",
+        "name": "id",
+        "type": "text",
+        "system": true,
+        "primaryKey": true,
+        "required": true,
+        "hidden": false,
+        "presentable": false,
+        "min": 15,
+        "max": 15,
+        "pattern": "^[a-z0-9]+$",
+        "autogeneratePattern": "[a-z0-9]{15}"
+      },
+      {
+        "id": "text_ftusers_username",
+        "name": "username",
+        "type": "text",
+        "system": false,
+        "required": true,
+        "hidden": false,
+        "presentable": true,
+        "primaryKey": false,
+        "min": 3,
+        "max": 50,
+        "pattern": "^[\\w][\\w\\.\\-]*$",
+        "autogeneratePattern": ""
+      },
+      {
+        "id": "password_ftusers",
+        "name": "password",
+        "type": "password",
+        "system": true,
+        "required": true,
+        "hidden": true,
+        "presentable": false,
+        "min": 8,
+        "max": 0,
+        "cost": 0,
+        "pattern": ""
+      },
+      {
+        "id": "text_ftusers_tokenkey",
+        "name": "tokenKey",
+        "type": "text",
+        "system": true,
+        "required": true,
+        "hidden": true,
+        "presentable": false,
+        "primaryKey": false,
+        "min": 30,
+        "max": 60,
+        "pattern": "",
+        "autogeneratePattern": "[a-zA-Z0-9]{50}"
+      },
+      {
+        "id": "email_ftusers",
+        "name": "email",
+        "type": "email",
+        "system": true,
+        "required": false,
+        "hidden": false,
+        "presentable": false,
+        "exceptDomains": null,
+        "onlyDomains": null
+      },
+      {
+        "id": "bool_ftusers_emailvis",
+        "name": "emailVisibility",
+        "type": "bool",
+        "system": true,
+        "required": false,
+        "hidden": false,
+        "presentable": false
+      },
+      {
+        "id": "bool_ftusers_verified",
+        "name": "verified",
+        "type": "bool",
+        "system": true,
+        "required": false,
+        "hidden": false,
+        "presentable": false
+      },
+      {
+        "id": "autodate_ftusers_created",
+        "name": "created",
+        "type": "autodate",
+        "system": false,
+        "hidden": false,
+        "presentable": false,
+        "onCreate": true,
+        "onUpdate": false
+      },
+      {
+        "id": "autodate_ftusers_updated",
+        "name": "updated",
+        "type": "autodate",
+        "system": false,
+        "hidden": false,
+        "presentable": false,
+        "onCreate": true,
+        "onUpdate": true
+      }
+    ],
+    "indexes": [
+      "CREATE UNIQUE INDEX `idx_ftusers_username` ON `ft_users` (`username`)",
+      "CREATE UNIQUE INDEX `idx_ftusers_tokenkey` ON `ft_users` (`tokenKey`)",
+      "CREATE UNIQUE INDEX `idx_ftusers_email` ON `ft_users` (`email`) WHERE `email` != ''"
+    ],
+    "passwordAuth": {
+      "enabled": true,
+      "identityFields": ["username"]
+    },
+    "oauth2": {
+      "enabled": false
+    },
+    "mfa": {
+      "enabled": false
+    },
+    "otp": {
+      "enabled": false
+    },
+    "authAlert": {
+      "enabled": false
+    },
+    "authToken": {
+      "duration": 2592000
+    }
+  },
+  {
+    "id": "pbc_ftmessages01",
+    "name": "ft_messages",
+    "type": "base",
+    "system": false,
+    "listRule": "@request.auth.id != \"\" && user = @request.auth.id",
+    "viewRule": "@request.auth.id != \"\" && user = @request.auth.id",
+    "createRule": "@request.auth.id != \"\" && @request.body.user = @request.auth.id",
+    "updateRule": "@request.auth.id != \"\" && user = @request.auth.id && (@request.body.user:isset = false || @request.body.user = @request.auth.id)",
+    "deleteRule": "@request.auth.id != \"\" && user = @request.auth.id",
+    "fields": [
+      {
+        "id": "text_ftmsg_id",
+        "name": "id",
+        "type": "text",
+        "system": true,
+        "primaryKey": true,
+        "required": true,
+        "hidden": false,
+        "presentable": false,
+        "min": 15,
+        "max": 15,
+        "pattern": "^[a-z0-9]+$",
+        "autogeneratePattern": "[a-z0-9]{15}"
+      },
+      {
+        "id": "relation_ftmsg_user",
+        "name": "user",
+        "type": "relation",
+        "system": false,
+        "required": true,
+        "hidden": false,
+        "presentable": false,
+        "collectionId": "pbc_ftusers00001",
+        "cascadeDelete": true,
+        "minSelect": 0,
+        "maxSelect": 1
+      },
+      {
+        "id": "text_ftmsg_text",
+        "name": "text",
+        "type": "text",
+        "system": false,
+        "required": false,
+        "hidden": false,
+        "presentable": true,
+        "primaryKey": false,
+        "min": 0,
+        "max": 100000,
+        "pattern": "",
+        "autogeneratePattern": ""
+      },
+      {
+        "id": "file_ftmsg_files",
+        "name": "files",
+        "type": "file",
+        "system": false,
+        "required": false,
+        "hidden": false,
+        "presentable": false,
+        "protected": false,
+        "maxSelect": 20,
+        "maxSize": 104857600,
+        "mimeTypes": [],
+        "thumbs": ["480x0"]
+      },
+      {
+        "id": "text_ftmsg_device",
+        "name": "device",
+        "type": "text",
+        "system": false,
+        "required": true,
+        "hidden": false,
+        "presentable": false,
+        "primaryKey": false,
+        "min": 1,
+        "max": 32,
+        "pattern": "",
+        "autogeneratePattern": ""
+      },
+      {
+        "id": "autodate_ftmsg_created",
+        "name": "created",
+        "type": "autodate",
+        "system": false,
+        "hidden": false,
+        "presentable": false,
+        "onCreate": true,
+        "onUpdate": false
+      },
+      {
+        "id": "autodate_ftmsg_updated",
+        "name": "updated",
+        "type": "autodate",
+        "system": false,
+        "hidden": false,
+        "presentable": false,
+        "onCreate": true,
+        "onUpdate": true
+      }
+    ],
+    "indexes": [
+      "CREATE INDEX `idx_ftmsg_user_created` ON `ft_messages` (`user`, `created`)"
+    ]
+  }
+]
